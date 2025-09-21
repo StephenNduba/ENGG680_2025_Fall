@@ -1,5 +1,5 @@
 # ENGG680_2025_fall
-This repository contains materials and assignments for the ENGG680 course in the Fall 2024 semester.
+This repository contains materials and assignments for the ENGG680 course in the Fall 2025 semester.
 
 ## Table of Contents
 - [Introduction to Python](#introduction-to-python)
