@@ -1,0 +1,1 @@
+ This is ENGG680 Lab_Assignment1\nThe purpose of this assignment is for the group to collaborate on github\nThe names and UCIDs of the members of this group incluse:\nStephen Nduba 30293841\nNaomy Lafond 30293570\nBright Odogwu 30270070\nOpeyemi Arogunmasa 30263505
