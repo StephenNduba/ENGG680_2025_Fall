@@ -1,0 +1,184 @@
+# Import necessary libraries
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+import matplotlib.pyplot as plt
+
+def create_dataset(dataset, time_step=1):
+    """
+    Creates sequences of data for the LSTM model.
+
+    Args:
+        dataset (numpy.array): The input data.
+        time_step (int): The number of previous time steps to use as input variables
+                         to predict the next time step.
+
+    Returns:
+        numpy.array, numpy.array: Input features and target labels.
+    """
+    dataX, dataY = [], []
+    # Check if the dataset is large enough to create sequences
+    if len(dataset) <= time_step + 1:
+        return np.array(dataX), np.array(dataY)
+
+    for i in range(len(dataset)-time_step-1):
+        a = dataset[i:(i+time_step), 0]
+        dataX.append(a)
+        dataY.append(dataset[i + time_step, 0])
+    return np.array(dataX), np.array(dataY)
+
+
+def main():
+    """
+    Main function to run the LSTM model for energy supply prediction.
+    """
+    # --- 1. Load and Preprocess Data ---
+    try:
+        # Load the dataset, skipping any rows that cause parsing errors
+        df = pd.read_csv('Table_Full Data_data.csv', on_bad_lines='skip')
+
+        # Convert the 'Date - MST' column to datetime objects and set it as the index
+        df['Date - MST'] = pd.to_datetime(df['Date - MST'])
+        df = df.set_index('Date - MST')
+
+        # Select the target column for prediction
+        # Assuming 'price' is the column name for price data
+        price_data = df['Price'].values.astype('float32')
+
+        # Reshape for scaling
+        price_data = price_data.reshape(-1, 1)
+
+        # Scale the data to be between 0 and 1
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaled_data = scaler.fit_transform(price_data)
+
+    except FileNotFoundError:
+        print("Error: The data file 'Table_Full Data_data.csv' was not found.")
+        print("Please make sure the CSV file is in the same directory as the script.")
+        return
+    except KeyError as e:
+        print(f"Error: The required column was not found in the CSV file: {e}")
+        return
+
+
+    # --- 2. Split Data into Training and Testing sets based on year ---
+    train_data = scaled_data[df.index.year != 2024]
+    test_data = scaled_data[df.index.year == 2024]
+
+
+    # --- 3. Prepare Data for LSTM ---
+    time_step = 60 # Using last 60 days to predict the next day
+    X_train, y_train = create_dataset(train_data, time_step)
+    X_test, y_test = create_dataset(test_data, time_step)
+
+    # Reshape input to be [samples, time steps, features] which is required for LSTM
+    if X_train.size > 0:
+      X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
+    else:
+      print("Warning: Training data is not large enough to create sequences with the specified time_step.")
+      return
+
+    if X_test.size > 0:
+      X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
+    else:
+      print("Warning: Test data is not large enough to create sequences with the specified time_step.")
+      # Handle the case where test data is empty or too small
+      # For example, you might skip training and prediction, or use a different approach
+      return
+
+
+    # --- 4. Build and Compile the LSTM Model ---
+    model = Sequential()
+    model.add(LSTM(50, return_sequences=True, input_shape=(time_step, 1)))
+    model.add(Dropout(0.2))
+    model.add(LSTM(50, return_sequences=True))
+    model.add(Dropout(0.2))
+    model.add(LSTM(50))
+    model.add(Dropout(0.2))
+    model.add(Dense(1))
+
+    model.compile(optimizer='adam', loss='mean_squared_error')
+
+    print("Model Summary:")
+    model.summary()
+
+
+    # --- 5. Train the Model ---
+    print("\nTraining the model...")
+    history = model.fit(X_train, y_train, validation_data=(X_test,y_test), epochs=100, batch_size=64, verbose=1)
+
+
+    # --- 6. Make Predictions ---
+    train_predict = model.predict(X_train)
+    test_predict = model.predict(X_test)
+
+    # Inverse transform to get actual values
+    train_predict = scaler.inverse_transform(train_predict)
+    test_predict = scaler.inverse_transform(test_predict)
+    y_train_inv = scaler.inverse_transform(y_train.reshape(-1, 1))
+    y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
+
+
+    # --- 7. Evaluate Model ---
+    from sklearn.metrics import mean_squared_error
+    train_rmse = np.sqrt(mean_squared_error(y_train_inv, train_predict))
+    test_rmse = np.sqrt(mean_squared_error(y_test_inv, test_predict))
+    print(f"\nTrain Root Mean Squared Error: {train_rmse}")
+    print(f"Test Root Mean Squared Error: {test_rmse}")
+
+    # Calculate percentage error
+    # Use the overall data range for percentage error calculation
+    overall_data_range = scaler.data_range_[0]
+    train_percentage_error = (train_rmse / overall_data_range) * 100
+    test_percentage_error = (test_rmse / overall_data_range) * 100
+
+    print(f"Train Percentage Error: {train_percentage_error:.2f}%")
+    print(f"Test Percentage Error: {test_percentage_error:.2f}%")
+
+
+    # --- 8. Plot the results ---
+    plt.figure(figsize=(14, 7))
+
+    # Create a combined array of predictions and original data for plotting
+    # This requires careful handling of indices to align plots correctly
+    # Get the original data indices for train and test sets
+    train_indices = df.index[df.index.year != 2024]
+    test_indices = df.index[df.index.year == 2024]
+
+    # Create full-length arrays for plotting with NaNs
+    full_data = scaler.inverse_transform(scaled_data)
+    train_predict_plot = np.full_like(full_data, np.nan)
+    test_predict_plot = np.full_like(full_data, np.nan)
+
+    # Place predictions into the correct time steps in the full arrays
+    # Account for the time_step offset in creating sequences
+    train_predict_indices = train_indices[time_step+1:len(train_predict)+time_step+1]
+    test_predict_indices = test_indices[time_step+1:len(test_predict)+time_step+1]
+
+    # Align predictions with original data based on date index
+    for i, date in enumerate(train_predict_indices):
+        if date in df.index:
+            train_predict_plot[df.index.get_loc(date)] = train_predict[i]
+
+    for i, date in enumerate(test_predict_indices):
+         if date in df.index:
+             test_predict_plot[df.index.get_loc(date)] = test_predict[i]
+
+    # Plot baseline and predictions
+    plt.plot(df.index, full_data, label='Original Data')
+    plt.plot(df.index, train_predict_plot, label='Training Predictions')
+    plt.plot(df.index, test_predict_plot, label='Testing Predictions')
+
+    plt.title('Price Prediction using LSTM')
+    plt.xlabel('Time (Date)')
+    plt.ylabel('Price')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+if __name__ == '__main__':
+    main()
